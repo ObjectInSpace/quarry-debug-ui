@@ -47,8 +47,7 @@ no. This mod changes that answer to yes. It adds no menus of its own.
   may depend on code the retail build does not include.
 - **With a screen reader:** The Quarry Access (QuarryAccess) reads most of these
   screens, but not yet the Blockouts chapter list or the story-variables
-  screen. In the chapter list, focus starts on the first chapter, the arrow
-  keys move it (without the usual click sound) and Enter starts the chapter.
+  screen.
 
 ## Requirements
 
