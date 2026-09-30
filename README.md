@@ -26,6 +26,13 @@ no. This mod changes that answer to yes. It adds no menus of its own.
   checkbox. Starting a chapter from here goes through a pre-start screen with
   subtitle options, All Settings, Movie Mode Setup and Continue. Where the
   chapter has story variables, a screen for setting them follows.
+- **Automation Path: a bot for the story's decisions.** With a route chosen,
+  the game makes the choices for you. Its code also decides QTE and fight
+  outcomes, though that has not been checked in play. It does not move your
+  character: you still walk and explore. MonteCarlo
+  chooses at random; PositiveOutcomes, NegativeOutcomes, CriticalPath and
+  FullPath have routes only in the Prologue; PerformanceMetrics has routes in
+  most chapters.
 - **Movie Mode: Debug Settings.** A button in the Movie Mode menu. According
   to the game's files, it sets each of the 9 decision types (QTEs, button
   mashing, conversations, interrupts, shooting, Don't Breathe, exploration,
@@ -69,7 +76,7 @@ The Quarry, which each use a different file.
 ## Checking that it works
 
 Each time the game starts, the mod writes `QuarryDebugUI.log` next to the DLL.
-It says either `Debug UI enabled` or why not.
+It says either `Debug UI enabled` or why not, and `Sound fix on` or why not.
 
 ## Uninstalling
 
@@ -80,6 +87,13 @@ The mod changes no game files; it works in memory while the game runs.
 
 - A game update may change the code the mod patches. The mod checks the exact
   bytes first. If they differ, it leaves the game alone and says so in the log.
+
+## Fixed in 1.1.0
+
+- **Silence after starting a chapter with an automation route.** In the
+  unmodded game, starting a chapter from Blockouts with any route left the
+  game with no sound until it was restarted, even back at the main menu. The
+  mod now keeps the sound on. Real online Wolf Pack play is unaffected.
 
 ## How it works
 
@@ -102,6 +116,18 @@ For modders and the curious.
   MovieMode, SettingsHomeWidget, PopupScreenBaseWidget, WolfPackHostWidget,
   CouchCo-opQuickStart, CouchCo-opNoCharactersAssigned and
   GameCompleteNestedContentBase.
+- **The sound fix.** Many chapters contain a sync step (`SyncMP_Gameflow`)
+  where the two online players' games meet. On entry it shows the Wolf Pack
+  wait-sync screen, which mutes the game (`GameplayStaticsSMG026.MuteAudio`,
+  zeroing the music, effects and voice volumes); on leaving it closes the
+  screen, which unmutes. Offline this lasts a frame or two. An automation run
+  leaves the step without closing the screen, so the unmute never comes, and
+  the mute lives on the game instance for the rest of the session. The mod
+  hooks the game instance's mute switch (`0x1414ee600`) and does not pass on a
+  mute that comes from that screen (the call at `0x14157c23c`) when the
+  session is not online, using the engine's own check behind
+  `IsMultiplayerSession` (`0x140e0b940`). Every other mute and every unmute is
+  passed on unchanged. All three places are checked byte for byte first.
 
 ## Building
 
@@ -115,11 +141,17 @@ The tests check that the patch changes exactly one byte and restores the page
 protection, that running it twice is harmless, that a one-byte difference at
 any position of the check is refused with nothing written, that unmapped
 memory is refused, that `CreateFX` reaches the real DLL, and that the check
-matches the installed game.
+matches the installed game. For the sound fix, they build a stand-in for the
+three places in the game's code and hook it through the mod's own install
+path: offline the screen's mute is not passed on, online it is, any other mute
+and every unmute are, and a changed byte in any of the three places is refused.
 
 ## License
 
 GPL-3.0-or-later. See `LICENSE`.
+
+Includes MinHook by Tsuda Kageyu, under the BSD 2-clause licence; its notice
+is in `third_party/minhook/LICENSE.txt`.
 
 This is an unofficial, fan-made mod. It is not affiliated with, endorsed by or
 supported by Supermassive Games, 2K or Microsoft. The Quarry is a trademark of

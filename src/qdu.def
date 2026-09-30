@@ -2,3 +2,7 @@ LIBRARY XAPOFX1_5
 EXPORTS
     CreateFX @1
     qdu_patch_at
+    qdu_unmute_check
+    qdu_unmute_should_skip
+    qdu_unmute_install
+    qdu_unmute_skipped

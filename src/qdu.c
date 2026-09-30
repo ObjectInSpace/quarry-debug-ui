@@ -19,14 +19,17 @@
  * Nothing in the shipped game content calls either.
  *
  * The 37 bytes checked occur once in the exe. Anything else there (a game
- * update) is refused and logged, and the game runs unchanged. */
+ * update) is refused and logged, and the game runs unchanged.
+ *
+ * Since 1.1.0 it also keeps the sound on after a debug start with an
+ * automation route (see unmute.c). */
 #include <windows.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
 #include <wchar.h>
 
-#define QDU_VERSION "1.0.0"
+#define QDU_VERSION "1.1.0"
 
 static const BYTE k_sig[37] = {
     0x48,0x8b,0x43,0x20, 0x48,0x85,0xc0, 0x40,0x0f,0x95,0xc7, 0x48,0x03,0xf8,
@@ -38,7 +41,8 @@ static const BYTE k_sig[37] = {
 
 static WCHAR g_dir[MAX_PATH];
 
-static void qlog(const char *fmt, ...)
+/* Also used by unmute.c. */
+void qdu_log(const char *fmt, ...)
 {
     WCHAR path[MAX_PATH];
     _snwprintf(path, MAX_PATH, L"%lsQuarryDebugUI.log", g_dir);
@@ -50,6 +54,22 @@ static void qlog(const char *fmt, ...)
     va_end(ap);
     fputc('\n', f);
     fclose(f);
+}
+#define qlog qdu_log
+
+int qdu_unmute_install(BYTE *base);
+
+/* Hooking suspends the process's threads, which is not safe under the loader
+ * lock, so it runs here. The game's code it hooks does not run until a chapter
+ * starts, long after this thread has finished. */
+static DWORD WINAPI install_unmute(void *arg)
+{
+    (void)arg;
+    int r = qdu_unmute_install((BYTE *)GetModuleHandleW(NULL));
+    if (r == 1) qlog("Sound fix on: a debug start with an automation route no longer leaves the game silent.");
+    else if (r == -4) qlog("Sound fix NOT on: could not hook the game's mute. The game is unchanged.");
+    else qlog("Sound fix NOT on: this game version is not the one this mod knows (check %d). The game is unchanged.", -r);
+    return 0;
 }
 
 /* 1 patched, 0 already patched, -1 bytes differ (refused), -2 not writable */
@@ -126,5 +146,9 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, void *r)
     else if (res == 0) qlog("Debug UI was already enabled.");
     else if (res == -1) qlog("Debug UI NOT enabled: this game version is not the one this mod knows. The game is unchanged.");
     else qlog("Debug UI NOT enabled: could not change the game's code.");
+
+    HANDLE t = CreateThread(NULL, 0, install_unmute, NULL, 0, NULL);
+    if (t) CloseHandle(t);
+    else qlog("Sound fix NOT on: could not start its thread.");
     return TRUE;
 }

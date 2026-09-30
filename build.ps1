@@ -10,7 +10,10 @@ $gcc = if ($env:QDU_GCC) { $env:QDU_GCC } elseif (Test-Path $winlibs) { $winlibs
 $game = 'D:\SteamLibrary\steamapps\Common\The Quarry\SMG026\Binaries\Win64'
 New-Item -ItemType Directory -Force "$root\build" | Out-Null
 
-& $gcc -shared -O2 -Wall -Wextra -static -s -o "$root\build\XAPOFX1_5.dll" "$root\src\qdu.c" "$root\src\qdu.def"
+$mh = "$root\third_party\minhook"
+$minhook = @("$mh\src\hook.c", "$mh\src\buffer.c", "$mh\src\trampoline.c", "$mh\src\hde\hde64.c")
+& $gcc -shared -O2 -Wall -Wextra -static -s -o "$root\build\XAPOFX1_5.dll" "$root\src\qdu.c" "$root\src\unmute.c" `
+    $minhook -I "$mh\include" "$root\src\qdu.def"
 if ($LASTEXITCODE) { throw "mod build failed" }
 & $gcc -O2 -Wall -Wextra -static -o "$root\build\test_qdu.exe" "$root\tests\test_qdu.c"
 if ($LASTEXITCODE) { throw "test build failed" }

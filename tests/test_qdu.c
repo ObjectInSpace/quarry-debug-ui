@@ -3,6 +3,7 @@
  * Exit code = number of failed checks. */
 #include <windows.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int g_fail;
@@ -108,14 +109,97 @@ int main(int argc, char **argv)
 
     /* 7. The signature is the one in the installed game exe (if given). The
      *    exe is mapped as an image, not run, so its bytes sit at their RVAs. */
+    typedef int (*pfn_ucheck)(const BYTE *);
+    pfn_ucheck ucheck = (pfn_ucheck)(void *)GetProcAddress(m, "qdu_unmute_check");
     if (argc >= 3) {
         HMODULE exe = LoadLibraryExA(argv[2], NULL, DONT_RESOLVE_DLL_REFERENCES);
         CHECK(exe != NULL, "the game exe maps for reading");
         if (exe) {
             BYTE *at = (BYTE *)exe + 0x15ec241;
             CHECK(!memcmp(at, k_retail, sizeof k_retail), "the signature matches the installed game at RVA 0x15ec241");
+            CHECK(ucheck && ucheck((BYTE *)exe) == 1, "the sound fix's three places match the installed game");
             FreeLibrary(exe);
         }
+    }
+
+    /* 8. The sound fix, end to end, on a stand-in for the game's code: the
+     *    three places built at their RVAs in executable memory, hooked through
+     *    the DLL's own install path. */
+    {
+        enum { MUTE = 0x14ee600, CALLSITE = 0x157c23c, MP = 0x0e0b940, SIZE = 0x1600000 };
+        typedef int (*pfn_uinst)(BYTE *);
+        typedef int (*pfn_skip)(int, const void *, const void *, int);
+        typedef LONG (*pfn_count)(void);
+        pfn_uinst uinst = (pfn_uinst)(void *)GetProcAddress(m, "qdu_unmute_install");
+        pfn_skip uskip = (pfn_skip)(void *)GetProcAddress(m, "qdu_unmute_should_skip");
+        pfn_count ucount = (pfn_count)(void *)GetProcAddress(m, "qdu_unmute_skipped");
+        CHECK(ucheck && uinst && uskip && ucount, "the sound fix's functions are exported");
+        Sleep(300);   /* the DLL's own install thread (refused on this exe) has finished */
+
+        static volatile ULONG_PTR world;   /* what the stand-in "get world" returns: 0 = offline */
+        BYTE *img = VirtualAlloc(NULL, SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+        memset(img, 0xcc, SIZE);
+        /* the mute switch: its real 18 opening bytes, then set [rcx+0x828] = dl and return */
+        static const BYTE mute[] = { 0x40,0x57, 0x48,0x81,0xec,0x90,0,0,0, 0x48,0x8b,0xf9, 0x38,0x91,0x28,0x08,0,0,
+                                     0x88,0x91,0x28,0x08,0,0, 0x48,0x81,0xc4,0x90,0,0,0, 0x5f, 0xc3 };
+        memcpy(img + MUTE, mute, sizeof mute);
+        /* the caller: push rbx / sub rsp,0x30 / call mute / mov rbx,[rsp+0x30] (the real
+         * bytes after the call) / add rsp,0x38 / ret -- rcx and dl pass straight through */
+        BYTE *cs = img + CALLSITE;
+        memcpy(cs - 5, "\x53\x48\x83\xec\x30", 5);
+        cs[0] = 0xe8;
+        LONG rel = (LONG)((img + MUTE) - (cs + 5));
+        memcpy(cs + 1, &rel, 4);
+        memcpy(cs + 5, "\x48\x8b\x5c\x24\x30\x48\x83\xc4\x38\xc3", 10);
+        /* the online check: its real bytes, calling a stub that returns `world` */
+        BYTE *mp = img + MP, *stub = img + 0x100;
+        static const BYTE head[] = { 0x48,0x83,0xec,0x28, 0x41,0xb8,1,0,0,0, 0x48,0x8b,0xd1, 0xe8 };
+        memcpy(mp, head, sizeof head);
+        rel = (LONG)(stub - (mp + 18));
+        memcpy(mp + 14, &rel, 4);
+        memcpy(mp + 18, "\x48\x85\xc0\x74\x5a", 5);            /* test rax,rax / je +0x5a */
+        memcpy(mp + 23, "\xb0\x01\x48\x83\xc4\x28\xc3", 7);    /* world found: al = 1 (online) */
+        memcpy(mp + 23 + 0x5a, "\x48\x83\xc4\x28\xc3", 5);     /* no world: al = 0 (offline) */
+        ULONG_PTR wa = (ULONG_PTR)&world;
+        stub[0] = 0x48; stub[1] = 0xb8; memcpy(stub + 2, &wa, 8);   /* mov rax, &world */
+        memcpy(stub + 10, "\x48\x8b\x00\xc3", 4);                  /* mov rax,[rax] / ret */
+
+        CHECK(ucheck(img) == 1, "the stand-in passes the byte checks");
+        int each = 1;
+        BYTE *spots[3] = { img + MUTE + 12, cs + 6, mp + 20 };
+        int want[3] = { -1, -2, -3 };
+        for (int i = 0; i < 3; i++) {
+            spots[i][0] ^= 1;
+            int got = ucheck(img);
+            if (got != want[i]) { printf("      changed place %d: returned %d\n", i, got); each = 0; }
+            spots[i][0] ^= 1;
+        }
+        LONG saved;
+        memcpy(&saved, cs + 1, 4);
+        LONG wrong = saved + 16;
+        memcpy(cs + 1, &wrong, 4);
+        if (ucheck(img) != -2) { printf("      a call to somewhere else was accepted\n"); each = 0; }
+        memcpy(cs + 1, &saved, 4);
+        CHECK(each, "a changed byte in any of the three places, or a call elsewhere, is refused");
+
+        typedef void (*pfn_set)(void *, unsigned char);
+        pfn_set via_screen = (pfn_set)(void *)(cs - 5), direct = (pfn_set)(void *)(img + MUTE);
+        BYTE *gi = calloc(1, 0x1000);
+        CHECK(uinst(img) == 1, "the sound fix installs on the stand-in");
+        world = 0;
+        via_screen(gi, 1);
+        CHECK(gi[0x828] == 0 && ucount() == 1, "offline: the wait-sync screen's mute is not passed on");
+        direct(gi, 1);
+        CHECK(gi[0x828] == 1, "any other mute is passed on");
+        via_screen(gi, 0);
+        CHECK(gi[0x828] == 0, "an unmute from the screen is passed on");
+        world = 0x1234;
+        via_screen(gi, 1);
+        CHECK(gi[0x828] == 1 && ucount() == 1, "online: the wait-sync screen's mute is passed on");
+
+        const void *a = (void *)0x1000, *b = (void *)0x2000;
+        CHECK(uskip(1, a, a, 0) && !uskip(1, a, a, 1) && !uskip(0, a, a, 0) && !uskip(1, b, a, 0),
+              "decision: skip only a mute, from the screen's path, offline");
     }
 
     printf(g_fail ? "%d check(s) FAILED\n" : "all checks passed\n", g_fail);
