@@ -1,0 +1,4 @@
+LIBRARY XAPOFX1_5
+EXPORTS
+    CreateFX @1
+    qdu_patch_at
